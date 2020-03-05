@@ -1,0 +1,82 @@
+apiVersion: kubeflow.org/v1alpha2
+kind: MPIJob
+metadata:
+  name: ml-goofys-dist
+spec:
+  slotsPerWorker: 1
+  cleanPodPolicy: Running
+  mpiReplicaSpecs:
+    Launcher:
+      replicas: 1
+      template:
+         spec:
+           containers:
+           - image: 041549501818.dkr.ecr.cn-northwest-1.amazonaws.com.cn/eks-dl-dist:latest
+             name: ml-distribution-launcher
+             command:
+             - mpirun
+             - --allow-run-as-root
+             - -np
+             - "3"
+             - -bind-to
+             - none
+             - -map-by
+             - slot
+             - -x
+             - NCCL_DEBUG=INFO
+             - -x
+             - LD_LIBRARY_PATH
+             - -x
+             - PATH
+             - -mca
+             - pml
+             - ob1
+             - -mca
+             - btl
+             - ^openib
+             - python
+             - models/resnet/tensorflow/train_imagenet_resnet_hvd.py
+             - --batch_size=256
+             - --model=resnet50
+             - --num_batches=1000
+             - --fp16
+             - --lr_decay_mode=poly
+             - --data_dir
+             - /data/tf-train-data
+             - --log_dir
+             - s3://imagenet-cn-northwest-1/resnet-train/k8s-goofys-g4dnxlarge-by-4/
+    Worker:
+      replicas: 3
+      volumeClaimTemplates:
+      template:
+        spec:
+          containers:
+          - image: 041549501818.dkr.ecr.cn-northwest-1.amazonaws.com.cn/eks-dl-dist:latest
+            name: ml-distribution-worker
+            env:
+            - name: AWS_LOG_LEVEL
+              value: "3"
+            - name: AWS_REGION
+              value: cn-northwest-1
+            - name: S3_ENDPOINT
+              value: s3.cn-northwest-1.amazonaws.com.cn
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: aws-secret
+                  key: access_key
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aws-secret
+                  key: access_secret
+            resources:
+              limits:
+                nvidia.com/gpu: 1
+            volumeMounts:
+              - name: data
+                mountPath: /data
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: csi-s3-pvc
